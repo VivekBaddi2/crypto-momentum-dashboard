@@ -20,9 +20,14 @@ function persistToDatabase(payload) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
-  }).catch((error) => {
-    console.error("Failed to persist dashboard data", error);
-  });
+  })
+    .then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      console.log(`Database persistence succeeded: ${payload.type}`);
+    })
+    .catch((error) => {
+      console.error(`Database persistence failed: ${payload.type}`, error);
+    });
 }
 
 /**
@@ -108,20 +113,6 @@ export function useCryptoData() {
         updatedAt: latestCandle?.closeTime ?? Date.now(),
       };
 
-      persistToDatabase({
-        type: "snapshot",
-        symbol,
-        interval: KLINE_INTERVAL,
-        candle: latestCandle,
-        ticker,
-        indicators: snapshot,
-        signal,
-        reasons,
-        tradePlan,
-        price: row.price,
-        occurredAt: new Date(),
-      });
-
       // Fire an alert only on a genuine transition INTO BUY or SELL, not on
       // every tick while a signal stays active (that would spam the feed).
       const prevSignal = lastSignals.current[symbol];
@@ -131,6 +122,18 @@ export function useCryptoData() {
 
       if (isSignalTransition) {
         pushAlert(symbol, signal, reasons, row.price, tradePlan);
+        persistToDatabase({
+          type: "signal",
+          symbol,
+          interval: KLINE_INTERVAL,
+          candle: latestCandle,
+          indicators: snapshot,
+          signal,
+          reasons,
+          tradePlan,
+          price: row.price,
+          occurredAt: new Date(),
+        });
         // Execute trade on signal transition
         const openedTrade = demoAccount.executeTrade(symbol, signal, tradePlan, row.price);
         if (openedTrade) {

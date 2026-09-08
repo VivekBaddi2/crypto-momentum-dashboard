@@ -29,11 +29,12 @@ connection string. Set `MONGODB_DB` to the database name you want to use. Keep
 `.env.local` private; it is ignored by git. The MongoDB URI is used only by the
 server-side `/api/persistence` route and is never sent to the browser.
 
-The dashboard persists candle revisions, latest ticker snapshots, indicator
-snapshots, confirmed signal transitions, paper trades, and demo-account state.
-Writes use deterministic keys and MongoDB upserts so reconnects and repeated
-client events do not create duplicate candle or signal records. Tickers are
-stored as the latest value per symbol rather than as an unlimited event log.
+The dashboard persists confirmed signal transitions and paper-trade lifecycle
+records, including the signal reasons, indicator values, trade plan, entry,
+exit, stop-loss, take-profit, quantity, timing, and P&L. It does not persist
+every live candle, ticker update, or indicator recomputation. Writes use
+deterministic keys and MongoDB upserts so reconnects and repeated client events
+do not create duplicate signal or trade records.
 
 Before using a connection string that has been shared publicly, rotate its
 database-user password in MongoDB Atlas and put the replacement value in

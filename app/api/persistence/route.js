@@ -1,21 +1,25 @@
 import { NextResponse } from "next/server";
-import { ensureIndexes, persistSnapshot, persistTrade } from "@/lib/db/persistence";
+import { ensureIndexes, persistSignal, persistTrade } from "@/lib/db/persistence";
 
 export const runtime = "nodejs";
 
 export async function POST(request) {
+  console.log("Persistence API request received");
+
   try {
     const body = await request.json();
+    console.log(`Persistence type: ${body.type || "missing"}`);
     await ensureIndexes();
 
-    if (body.type === "snapshot") {
-      await persistSnapshot(body);
+    if (body.type === "signal") {
+      await persistSignal(body);
     } else if (body.type === "trade") {
       await persistTrade(body);
     } else {
       return NextResponse.json({ error: "Unsupported persistence type" }, { status: 400 });
     }
 
+    console.log("Persistence request completed");
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("Persistence request failed", error);
