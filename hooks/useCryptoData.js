@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { fetchAllInitialCandles } from "@/lib/binanceRest";
+import { fetchAllInitialCandles, fetchTradableUsdtPairs } from "@/lib/binanceRest";
 import { BinanceStreamManager } from "@/lib/binanceSocket";
 import { computeIndicatorSnapshot } from "@/lib/indicators";
 import { evaluateSignal, computeTradePlan, SIGNAL } from "@/lib/signalEngine";
@@ -47,6 +47,8 @@ export function useCryptoData() {
   const [alerts, setAlerts] = useState([]);
   const [connectionStatus, setConnectionStatus] = useState("connecting");
   const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [availablePairs, setAvailablePairs] = useState(TRACKED_SYMBOLS);
+  const [trackedSymbols, setTrackedSymbols] = useState(TRACKED_SYMBOLS);
 
   const candleBuffers = useRef({}); // symbol -> candle[]
   const lastSignals = useRef({}); // symbol -> last SIGNAL for transition detection
@@ -187,17 +189,25 @@ export function useCryptoData() {
 
     async function bootstrap() {
       setIsInitialLoading(true);
-      try {
-        const response = await fetch("/api/persistence");
-        if (response.ok) {
-          const { account } = await response.json();
-          demoAccount.hydrate(account);
+      if (trackedSymbols.length === TRACKED_SYMBOLS.length) {
+        try {
+          const response = await fetch("/api/persistence");
+          if (response.ok) {
+            const { account } = await response.json();
+            demoAccount.hydrate(account);
+          }
+        } catch (error) {
+          console.error("Account hydration failed", error);
         }
-      } catch (error) {
-        console.error("Account hydration failed", error);
+        try {
+          const pairs = await fetchTradableUsdtPairs();
+          setAvailablePairs(pairs);
+        } catch (error) {
+          console.error("Pair catalog loading failed", error);
+        }
       }
       const initial = await fetchAllInitialCandles(
-        TRACKED_SYMBOLS,
+        trackedSymbols,
         KLINE_INTERVAL,
         CANDLE_BUFFER_SIZE
       );
@@ -206,7 +216,7 @@ export function useCryptoData() {
       candleBuffers.current = initial;
 
       const seeded = {};
-      for (const symbol of TRACKED_SYMBOLS) {
+      for (const symbol of trackedSymbols) {
         const row = recomputeSymbol(symbol);
         if (row) seeded[symbol] = row;
       }
@@ -216,7 +226,7 @@ export function useCryptoData() {
       // Only start streaming live data once history is seeded, so the
       // first indicator readings aren't computed on a near-empty buffer.
       const manager = new BinanceStreamManager({
-        symbols: TRACKED_SYMBOLS,
+        symbols: trackedSymbols,
         interval: KLINE_INTERVAL,
         onStatusChange: setConnectionStatus,
         onKline: (symbol, candle) => {
@@ -252,17 +262,29 @@ export function useCryptoData() {
       streamManagerRef.current?.close();
       if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
     };
-  }, [recomputeSymbol, scheduleFlush]);
+  }, [recomputeSymbol, scheduleFlush, trackedSymbols]);
 
   const assetList = useMemo(() => Object.values(assets), [assets]);
   const accountSummary = demoAccount.getAccountSummary();
 
   return {
     assets: assetList,
-    getCandles: (symbol) => candleBuffers.current[symbol] || [],
+    getCandles: (symbol) => [...(candleBuffers.current[symbol] || [])],
     alerts,
     connectionStatus,
     isInitialLoading,
-    account: accountSummary
+    account: accountSummary,
+    availablePairs,
+    trackedSymbols,
+    addPair: (symbol) => {
+      if (availablePairs.includes(symbol)) {
+        setTrackedSymbols((current) => current.includes(symbol) ? current : [...current, symbol]);
+      }
+    },
+    removePair: (symbol) => {
+      if (trackedSymbols.length > 1) {
+        setTrackedSymbols((current) => current.filter((item) => item !== symbol));
+      }
+    },
   };
 }

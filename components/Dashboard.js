@@ -18,7 +18,18 @@ const STATUS_CONFIG = {
 };
 
 export default function Dashboard() {
-  const { assets, getCandles, alerts, connectionStatus, isInitialLoading, account } =
+  const {
+    assets,
+    getCandles,
+    alerts,
+    connectionStatus,
+    isInitialLoading,
+    account,
+    availablePairs,
+    trackedSymbols,
+    addPair,
+    removePair,
+  } =
     useCryptoData();
 
   const [signalFilter, setSignalFilter] = useState("ALL");
@@ -160,6 +171,10 @@ export default function Dashboard() {
               searchQuery={searchQuery}
               onSearchChange={setSearchQuery}
               resultCount={filteredAssets.length}
+              availablePairs={availablePairs}
+              trackedSymbols={trackedSymbols}
+              onAddPair={addPair}
+              onRemovePair={removePair}
             />
             <TickerTable
               assets={filteredAssets}
