@@ -15,6 +15,16 @@ import {
 
 const MAX_ALERTS = 60;
 
+function persistToDatabase(payload) {
+  fetch("/api/persistence", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).catch((error) => {
+    console.error("Failed to persist dashboard data", error);
+  });
+}
+
 /**
  * The single source of truth for the dashboard. Responsibilities:
  *  1. REST-bootstraps candle history for every tracked symbol.
@@ -98,6 +108,20 @@ export function useCryptoData() {
         updatedAt: latestCandle?.closeTime ?? Date.now(),
       };
 
+      persistToDatabase({
+        type: "snapshot",
+        symbol,
+        interval: KLINE_INTERVAL,
+        candle: latestCandle,
+        ticker,
+        indicators: snapshot,
+        signal,
+        reasons,
+        tradePlan,
+        price: row.price,
+        occurredAt: new Date(),
+      });
+
       // Fire an alert only on a genuine transition INTO BUY or SELL, not on
       // every tick while a signal stays active (that would spam the feed).
       const prevSignal = lastSignals.current[symbol];
@@ -108,13 +132,25 @@ export function useCryptoData() {
       if (isSignalTransition) {
         pushAlert(symbol, signal, reasons, row.price, tradePlan);
         // Execute trade on signal transition
-        demoAccount.executeTrade(symbol, signal, tradePlan, row.price);
+        const openedTrade = demoAccount.executeTrade(symbol, signal, tradePlan, row.price);
+        if (openedTrade) {
+          persistToDatabase({
+            type: "trade",
+            trade: openedTrade,
+            account: demoAccount.getAccountSummary(),
+          });
+        }
       }
       lastSignals.current[symbol] = signal;
 
       // Update position for this symbol to check SL/TP
       const closedTrade = demoAccount.updatePosition(symbol, row.price);
       if (closedTrade) {
+        persistToDatabase({
+          type: "trade",
+          trade: closedTrade,
+          account: demoAccount.getAccountSummary(),
+        });
         // Optionally, we could push a closure alert here
         // pushAlert(symbol, 'CLOSED', [`Position closed: ${closedTrade.exitReason}`], closedTrade.exitPrice, {});
       }

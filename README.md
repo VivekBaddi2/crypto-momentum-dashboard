@@ -22,6 +22,23 @@ public by design.
 npm install
 ```
 
+## MongoDB persistence
+
+Copy `.env.example` to `.env.local` and set `MONGODB_URI` to a MongoDB Atlas
+connection string. Set `MONGODB_DB` to the database name you want to use. Keep
+`.env.local` private; it is ignored by git. The MongoDB URI is used only by the
+server-side `/api/persistence` route and is never sent to the browser.
+
+The dashboard persists candle revisions, latest ticker snapshots, indicator
+snapshots, confirmed signal transitions, paper trades, and demo-account state.
+Writes use deterministic keys and MongoDB upserts so reconnects and repeated
+client events do not create duplicate candle or signal records. Tickers are
+stored as the latest value per symbol rather than as an unlimited event log.
+
+Before using a connection string that has been shared publicly, rotate its
+database-user password in MongoDB Atlas and put the replacement value in
+`.env.local`.
+
 ## 2. Run the dev server
 
 ```bash
