@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { ensureIndexes, loadAccount, persistSignal, persistTrade } from "@/lib/db/persistence";
+import { WORKER_ACCOUNT_ID } from "@/lib/constants";
 
 export const runtime = "nodejs";
 
@@ -49,7 +50,7 @@ function validatePayload(body) {
 
 export async function GET(request) {
   const hasCookie = request.cookies.has(ACCOUNT_COOKIE);
-  const accountId = getAccountId(request);
+  const accountId = WORKER_ACCOUNT_ID;
   try {
     const account = await loadAccount(accountId);
     return responseWithAccount(NextResponse.json({ account }), accountId, !hasCookie);

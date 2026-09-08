@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { fetchAllInitialCandles, fetchTradableUsdtPairs } from "@/lib/binanceRest";
+import { fetchAllInitialCandles } from "@/lib/binanceRest";
 import { BinanceStreamManager } from "@/lib/binanceSocket";
 import { computeIndicatorSnapshot } from "@/lib/indicators";
 import { evaluateSignal, computeTradePlan, SIGNAL } from "@/lib/signalEngine";
@@ -56,6 +56,7 @@ export function useCryptoData() {
   const streamManagerRef = useRef(null);
   const flushTimerRef = useRef(null);
   const dirtySymbols = useRef(new Set());
+  const catalogLoadedRef = useRef(false);
 
   const pushAlert = useCallback((symbol, signal, reasons, price, tradePlan) => {
     setAlerts((prev) => {
@@ -125,41 +126,8 @@ export function useCryptoData() {
 
       if (isSignalTransition) {
         pushAlert(symbol, signal, reasons, row.price, tradePlan);
-        persistToDatabase({
-          type: "signal",
-          symbol,
-          interval: KLINE_INTERVAL,
-          candle: latestCandle,
-          indicators: snapshot,
-          signal,
-          reasons,
-          tradePlan,
-          price: row.price,
-          occurredAt: new Date(),
-        });
-        // Execute trade on signal transition
-        const openedTrade = demoAccount.executeTrade(symbol, signal, tradePlan, row.price);
-        if (openedTrade) {
-          persistToDatabase({
-            type: "trade",
-            trade: openedTrade,
-            account: demoAccount.getAccountSummary(),
-          });
-        }
       }
       if (latestCandle?.isFinal) lastSignals.current[symbol] = signal;
-
-      // Update position for this symbol to check SL/TP
-      const closedTrade = demoAccount.updatePosition(symbol, row.price);
-      if (closedTrade) {
-        persistToDatabase({
-          type: "trade",
-          trade: closedTrade,
-          account: demoAccount.getAccountSummary(),
-        });
-        // Optionally, we could push a closure alert here
-        // pushAlert(symbol, 'CLOSED', [`Position closed: ${closedTrade.exitReason}`], closedTrade.exitPrice, {});
-      }
 
       return row;
     },
@@ -189,7 +157,8 @@ export function useCryptoData() {
 
     async function bootstrap() {
       setIsInitialLoading(true);
-      if (trackedSymbols.length === TRACKED_SYMBOLS.length) {
+      if (!catalogLoadedRef.current) {
+        catalogLoadedRef.current = true;
         try {
           const response = await fetch("/api/persistence");
           if (response.ok) {
@@ -200,10 +169,18 @@ export function useCryptoData() {
           console.error("Account hydration failed", error);
         }
         try {
-          const pairs = await fetchTradableUsdtPairs();
-          setAvailablePairs(pairs);
+          const response = await fetch("/api/pairs");
+          if (!response.ok) throw new Error(`Pair catalog HTTP ${response.status}`);
+          const { pairs } = await response.json();
+          const symbols = pairs.map((pair) => pair.symbol);
+          if (!symbols.length) throw new Error("Pair catalog is empty");
+          setAvailablePairs(symbols);
+          setTrackedSymbols(symbols);
+          return;
         } catch (error) {
           console.error("Pair catalog loading failed", error);
+          setIsInitialLoading(false);
+          return;
         }
       }
       const initial = await fetchAllInitialCandles(
@@ -223,43 +200,45 @@ export function useCryptoData() {
       setAssets(seeded);
       setIsInitialLoading(false);
 
-      // Only start streaming live data once history is seeded, so the
-      // first indicator readings aren't computed on a near-empty buffer.
-      const manager = new BinanceStreamManager({
-        symbols: trackedSymbols,
-        interval: KLINE_INTERVAL,
-        onStatusChange: setConnectionStatus,
-        onKline: (symbol, candle) => {
-          const buffer = candleBuffers.current[symbol] || [];
-          const last = buffer[buffer.length - 1];
+      // Split the universe across connections to keep combined stream URLs
+      // within practical browser and Binance request limits.
+      const managers = [];
+      for (let i = 0; i < trackedSymbols.length; i += 100) {
+        const manager = new BinanceStreamManager({
+          symbols: trackedSymbols.slice(i, i + 100),
+          interval: KLINE_INTERVAL,
+          onStatusChange: setConnectionStatus,
+          onKline: (symbol, candle) => {
+            const buffer = candleBuffers.current[symbol] || [];
+            const last = buffer[buffer.length - 1];
 
-          if (last && last.openTime === candle.openTime) {
-            // Same in-progress candle — replace it in place.
-            buffer[buffer.length - 1] = candle;
-          } else {
-            buffer.push(candle);
-            if (buffer.length > CANDLE_BUFFER_SIZE) buffer.shift();
-          }
-          candleBuffers.current[symbol] = buffer;
-          dirtySymbols.current.add(symbol);
-          scheduleFlush();
-        },
-        onMiniTicker: (symbol, ticker) => {
-          tickerCache.current[symbol] = ticker;
-          dirtySymbols.current.add(symbol);
-          scheduleFlush();
-        },
-      });
-
-      manager.connect();
-      streamManagerRef.current = manager;
+            if (last && last.openTime === candle.openTime) {
+              buffer[buffer.length - 1] = candle;
+            } else {
+              buffer.push(candle);
+              if (buffer.length > CANDLE_BUFFER_SIZE) buffer.shift();
+            }
+            candleBuffers.current[symbol] = buffer;
+            dirtySymbols.current.add(symbol);
+            scheduleFlush();
+          },
+          onMiniTicker: (symbol, ticker) => {
+            tickerCache.current[symbol] = ticker;
+            dirtySymbols.current.add(symbol);
+            scheduleFlush();
+          },
+        });
+        manager.connect();
+        managers.push(manager);
+      }
+      streamManagerRef.current = managers;
     }
 
     bootstrap();
 
     return () => {
       cancelled = true;
-      streamManagerRef.current?.close();
+      streamManagerRef.current?.forEach((manager) => manager.close());
       if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
     };
   }, [recomputeSymbol, scheduleFlush, trackedSymbols]);
@@ -284,6 +263,13 @@ export function useCryptoData() {
     removePair: (symbol) => {
       if (trackedSymbols.length > 1) {
         setTrackedSymbols((current) => current.filter((item) => item !== symbol));
+        delete candleBuffers.current[symbol];
+        delete tickerCache.current[symbol];
+        setAssets((current) => {
+          const next = { ...current };
+          delete next[symbol];
+          return next;
+        });
       }
     },
   };
