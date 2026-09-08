@@ -50,7 +50,7 @@ export default function Performance() {
         <Metric icon={Percent} label="Win rate" value={`${account.winRate}%`} detail={`${account.winningTrades} wins / ${account.losingTrades} losses`} tone="amber" />
         <Metric icon={TrendingUp} label="Gross profit" value={`+${money(account.totalProfit)}`} detail="Winning trades" tone="bull" />
         <Metric icon={TrendingDown} label="Gross loss" value={`-${money(account.totalLoss)}`} detail="Losing trades" tone="bear" />
-        <Metric icon={BriefcaseBusiness} label="Total trades" value={account.totalTrades} detail={`${account.openPositions.length} currently open`} tone="ink" />
+        <Metric icon={BriefcaseBusiness} label="Total trades" value={account.totalTrades} detail={`${account.openPositions} currently open`} tone="ink" />
       </section>
 
       <section className="grid gap-4 lg:grid-cols-[1.35fr_0.65fr]">

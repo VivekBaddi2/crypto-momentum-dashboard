@@ -118,7 +118,8 @@ export function useCryptoData() {
       const prevSignal = lastSignals.current[symbol];
       const isSignalTransition =
         (signal === SIGNAL.BUY || signal === SIGNAL.SELL) &&
-        prevSignal !== signal;
+        prevSignal !== signal &&
+        latestCandle?.isFinal;
 
       if (isSignalTransition) {
         pushAlert(symbol, signal, reasons, row.price, tradePlan);
@@ -144,7 +145,7 @@ export function useCryptoData() {
           });
         }
       }
-      lastSignals.current[symbol] = signal;
+      if (latestCandle?.isFinal) lastSignals.current[symbol] = signal;
 
       // Update position for this symbol to check SL/TP
       const closedTrade = demoAccount.updatePosition(symbol, row.price);
@@ -186,6 +187,15 @@ export function useCryptoData() {
 
     async function bootstrap() {
       setIsInitialLoading(true);
+      try {
+        const response = await fetch("/api/persistence");
+        if (response.ok) {
+          const { account } = await response.json();
+          demoAccount.hydrate(account);
+        }
+      } catch (error) {
+        console.error("Account hydration failed", error);
+      }
       const initial = await fetchAllInitialCandles(
         TRACKED_SYMBOLS,
         KLINE_INTERVAL,
