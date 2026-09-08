@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { createServer } from "node:http";
 import WebSocket from "ws";
 import { DemoAccount } from "../lib/account.js";
 import {
@@ -26,6 +27,29 @@ const candleBuffers = {};
 const lastSignals = {};
 const tickerCache = {};
 const managers = [];
+const symbolQueues = new Map();
+const workerStartedAt = new Date().toISOString();
+
+const healthServer = createServer((request, response) => {
+  if (request.url !== "/health" && request.url !== "/") {
+    response.writeHead(404, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ error: "Not found" }));
+    return;
+  }
+
+  response.writeHead(200, { "Content-Type": "application/json" });
+  response.end(JSON.stringify({
+    ok: true,
+    service: "crypto-trading-worker",
+    startedAt: workerStartedAt,
+    streams: managers.length,
+  }));
+});
+
+const port = Number(process.env.PORT || 10000);
+healthServer.listen(port, "0.0.0.0", () => {
+  console.log(`Worker health server listening on port ${port}`);
+});
 
 async function getPairs() {
   const cached = await loadPairCatalog();
@@ -48,6 +72,24 @@ async function persistTradeState(trade = null) {
     trade,
     account: account.getAccountSummary(),
   });
+}
+
+function enqueueSymbolTask(symbol, task) {
+  const previous = symbolQueues.get(symbol) || Promise.resolve();
+  const next = previous
+    .catch((error) => console.error(`Previous ${symbol} task failed`, error))
+    .then(task);
+  symbolQueues.set(symbol, next);
+  next.finally(() => {
+    if (symbolQueues.get(symbol) === next) symbolQueues.delete(symbol);
+  });
+  return next;
+}
+
+async function processTicker(symbol, ticker) {
+  tickerCache[symbol] = ticker;
+  const closedTrade = account.updatePosition(symbol, ticker.lastPrice);
+  if (closedTrade) await persistTradeState(closedTrade);
 }
 
 async function processCandle(symbol, candle) {
@@ -103,8 +145,14 @@ async function start() {
       symbols: symbols.slice(index, index + 100),
       interval: KLINE_INTERVAL,
       WebSocketImpl: WebSocket,
-      onKline: (symbol, candle) => processCandle(symbol, candle).catch((error) => console.error("Candle processing failed", error)),
-      onMiniTicker: (symbol, ticker) => { tickerCache[symbol] = ticker; },
+      onKline: (symbol, candle) => enqueueSymbolTask(
+        symbol,
+        () => processCandle(symbol, candle)
+      ).catch((error) => console.error("Candle processing failed", error)),
+      onMiniTicker: (symbol, ticker) => enqueueSymbolTask(
+        symbol,
+        () => processTicker(symbol, ticker)
+      ).catch((error) => console.error("Ticker processing failed", error)),
       onStatusChange: (status) => console.log(`Worker stream ${index / 100 + 1}: ${status}`),
     });
     manager.connect();
@@ -120,6 +168,7 @@ start().catch((error) => {
 
 function shutdown() {
   managers.forEach((manager) => manager.close());
+  healthServer.close();
   process.exit(0);
 }
 
