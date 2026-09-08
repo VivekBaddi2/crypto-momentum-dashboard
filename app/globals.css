@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a3140 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: #2a3140;
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+body {
+  background-image: radial-gradient(
+    circle at 10% 0%,
+    rgba(212, 162, 76, 0.05),
+    transparent 40%
+  );
+}
+
+/* Tabular figures everywhere numbers appear, so columns stay aligned as
+   values tick up/down in real time. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid #d4a24c;
+  outline-offset: 2px;
+}
